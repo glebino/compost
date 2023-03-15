@@ -1,0 +1,120 @@
+version: '3.9'
+
+x-env: &pg_env
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: '${POSTGRES_DB}'
+  POSTGRES_USER: '${POSTGRES_USER}'
+  POSTGRES_PASSWORD: '${POSTGRES_PASSWORD}'
+
+services:
+  web-app:
+    image: '${REPO_URL}'/web-app:latest
+    restart: always
+    #build:
+      #context: .
+      #target: web-app
+    volumes:
+      - media:/app/media
+    ports:
+      - 3000:3000
+    environment:
+      <<: *pg_env
+    networks:
+      - internal
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik
+      - traefik.http.routers.web-client.entrypoints=https
+      - traefik.http.routers.web-client.rule=Host(`web-app.mydomain.com`) && PathPrefix(`/`)
+      - traefik.http.services.web-client.loadbalancer.server.port=3000
+
+  postgres:
+    image: postgres:14
+    networks:
+      - internal
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - 5432:5432
+    environment:
+      <<: *pg_env
+
+  traefik:
+    # The official v2 Traefik docker image
+    image: traefik:v2.7
+    # Enables the web UI and tells Traefik to listen to docker
+    command:
+      - --accesslog
+      - --log
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.watch=true
+      - --providers.docker.endpoint=unix:///var/run/docker.sock
+      - --providers.docker.network='traefik'
+      - --providers.docker.exposedByDefault=false
+      - --providers.docker.defaultRule=Host(`{{ .Name }}.mydomain.com`)
+      - --entrypoints.http.address=:80
+      - --entrypoints.http.http.redirections.entryPoint.to=https
+      - --entrypoints.http.http.redirections.entryPoint.scheme=https
+      - --entrypoints.https.address=:443
+      - --entrypoints.https.http.tls.certResolver=le
+      - --certificatesresolvers.le.acme.email=test@testerson.te
+      - --certificatesresolvers.le.acme.storage=/certificates/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge=true
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=http
+    ports:
+      - 80:80
+      - 443:443
+    networks:
+      - internal
+      - traefik
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - traefik_certificates:/certificates
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik
+      - traefik.http.services.traefik.loadbalancer.server.port=8080
+      - traefik.http.routers.traefik.entrypoints=https
+      - traefik.http.routers.traefik.rule=Host(`traefik.mydomain.com`) && PathPrefix(`/`)
+    
+    ## for basic auth enable this:
+
+    # - traefik.http.middlewares.admin-auth.basicauth.users=${TRAEFIK_USERNAME:-traefik}:${TRAEFIK_PASSWORD_HASH?}
+    # - traefik.http.routers.traefik_traefik.middlewares=admin-auth
+  someapi:
+    image: '{$REPO_URL}'someapi:latest
+    restart: always
+    #build:
+      #context: .
+      #dockerfile: .docker/Dockerfile
+    networks:
+      - internal
+      - traefik
+    volumes:
+      - media:/public/media
+    ports:
+      - 127.0.0.1:1337:1337
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik
+      - traefik.http.routers.strapi.entrypoints=https
+      - traefik.http.routers.strapi.rule=Host(`someapi.mydomain.com`) && PathPrefix(`/`)
+      - traefik.http.services.strapi.loadbalancer.server.port=1337
+    environment:
+      DATABASE_PASSWORD: '${DATABASE_PASSWORD}'
+
+networks:
+  internal:
+  traefik:
+    name: traefik
+    attachable: true
+
+
+volumes:
+  pgdata:
+  media:
+  traefik_certificates:
+
